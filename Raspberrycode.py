@@ -45,7 +45,6 @@ while True:
         cursor.execute(sql, (temperatura, luminosidade, umidade_solo))
         db.commit()
 
-        # --- Controle automático ---
         comando = None
 
         # Ventilador (baseado na temperatura)
