@@ -81,4 +81,4 @@ while True:
         print("Dado inválido recebido:", linha)
     except Exception as e:
         print("Erro:", e)
-        time.sleep(2)
+       
