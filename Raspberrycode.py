@@ -1,84 +1,71 @@
-import serial
-import json
-import time
-import mysql.connector
-from datetime import datetime
+// ** Código Arduino FINAL: Leds (Ativo-Alto) e Sensores Corrigidos **
 
-# --- Configurações ---
-porta_serial = '/dev/ttyACM0'   # ajuste se necessário
-baud_rate = 9600
+// ================= CONFIGURAÇÕES ===================
+#define LDR_PIN A0      //
+#define SOIL_PIN A1     //
+#define LM35_PIN A2     // 💡 LM35 agora está no A2, liberando o A0/A1
+#define PIN_VENTILADOR 7
+#define PIN_IRRIGACAO 8
+#define PIN_ILUMINACAO 9
 
-# Conexão serial
-porta = serial.Serial(porta_serial, baud_rate, timeout=1)
-time.sleep(2)
+unsigned long intervaloEnvio = 10000; 
+unsigned long ultimoEnvio = 0;
 
-# Conexão com o banco de dados MariaDB
-db = mysql.connector.connect(
-    host="10.1.25.78",
-    user="vinicius",
-    password="1134707",
-    database="smartfarm"
-)
-cursor = db.cursor()
+void setup() {
+  Serial.begin(9600);
+  pinMode(PIN_VENTILADOR, OUTPUT);
+  pinMode(PIN_IRRIGACAO, OUTPUT);
+  pinMode(PIN_ILUMINACAO, OUTPUT);
+  pinMode(LM35_PIN, INPUT); 
 
-print("Conexões estabelecidas. Iniciando leitura...")
+  // Todos desligados inicialmente (Lógica Padrão: LOW desliga)
+  digitalWrite(PIN_VENTILADOR, LOW); 
+  digitalWrite(PIN_IRRIGACAO, LOW);
+  digitalWrite(PIN_ILUMINACAO, LOW);
 
-# --- Loop principal ---
-while True:
-    linha = porta.readline().decode('utf-8').strip()
-    if not linha:
-        continue
+  Serial.println("Sistema SmartFarm iniciado!");
+}
 
-    try:
-        dados = json.loads(linha)
+void loop() {
+  unsigned long agora = millis();
+  if (agora - ultimoEnvio >= intervaloEnvio) {
+    ultimoEnvio = agora;
 
-        temperatura = dados["temperatura"]
-        luminosidade = dados["luminosidade"]
-        umidade_solo = dados["umidade_solo"]
+    // Leitura dos sensores
+    int valorLM35 = analogRead(LM35_PIN);
+    // 🌡️ FÓRMULA CORRETA: Tensão/passo * 100 para LM35
+    float temperatura = valorLM35 * 0.48828125; 
+    
+    int valorLuz = analogRead(LDR_PIN);
+    // 💡 Lógica corrigida do LDR: Alto analógico (1023) = Escuro. Inverte para % de claridade.
+    float luzPercent = 100.0 - ((valorLuz / 1023.0) * 100.0); 
+    
+    int valorSolo = analogRead(SOIL_PIN);
+    // 💧 Lógica corrigida do Solo: Alto analógico (1023) = Seco. Inverte para % de umidade.
+    float soloPercent = 100.0 - ((valorSolo / 1023.0) * 100.0); 
 
-        # Exibe dados no terminal
-        print(f"Temp: {temperatura:.1f} °C | Luz: {luminosidade:.1f}% | Solo: {umidade_solo:.1f}%")
+    // Monta dados em formato JSON (Sem umidade do ar!)
+    String dados = "{";
+    dados += "\"temperatura\":" + String(temperatura, 1) + ",";
+    dados += "\"luminosidade\":" + String(luzPercent, 1) + ",";
+    dados += "\"umidade_solo\":" + String(soloPercent, 1);
+    dados += "}";
+    Serial.println(dados);
+  }
 
-        # --- Grava no banco com timestamp ---
-        timestamp = datetime.now()
-        sql = """INSERT INTO sensores (temperatura, luminosidade, umidade_solo, data_hora)
-                 VALUES (%s, %s, %s, %s)"""
-        cursor.execute(sql, (temperatura, luminosidade, umidade_solo, timestamp))
-        db.commit()
+  // ===== RECEBE COMANDOS DA RASPBERRY (LÓGICA PADRÃO) =====
+  if (Serial.available() > 0) {
+    String comando = Serial.readStringUntil('\n');
+    comando.trim();
+    if (comando.length() > 0) {
+      // ATUADORES LÓGICA PADRÃO: ON = HIGH, OFF = LOW
+      if (comando == "VENTILADOR_ON") digitalWrite(PIN_VENTILADOR, HIGH);
+      else if (comando == "IRRIGACAO_ON") digitalWrite(PIN_IRRIGACAO, HIGH);
+      else if (comando == "LUZ_ON") digitalWrite(PIN_ILUMINACAO, HIGH);
 
-        # --- Controle automático ---
-        comandos = []
-
-        # Ventilador (temperatura)
-        if temperatura > 25:
-            comandos.append("VENTILADOR_ON")
-        elif temperatura < 20:
-            comandos.append("VENTILADOR_OFF")
-
-        # Irrigação (umidade do solo)
-        if umidade_solo < 45:
-            comandos.append("IRRIGACAO_ON")
-        elif umidade_solo > 50:
-            comandos.append("IRRIGACAO_OFF")
-
-        # Iluminação (luminosidade)
-        if luminosidade < 70:
-            comandos.append("LUZ_ON")
-        elif luminosidade > 80:
-            comandos.append("LUZ_OFF")
-
-        # --- Envia comandos e registra log ---
-        for cmd in comandos:
-            porta.write((cmd + "\n").encode())
-            cursor.execute("INSERT INTO logs_comandos (comando, data_hora) VALUES (%s, %s)", (cmd, timestamp))
-            db.commit()
-            print("Comando enviado:", cmd)
-
-        print("-" * 50)
-        time.sleep(2)
-
-    except json.JSONDecodeError:
-        print("Dado inválido recebido:", linha)
-    except Exception as e:
-        print("Erro:", e)
-       
+      else if (comando == "VENTILADOR_OFF") digitalWrite(PIN_VENTILADOR, LOW);
+      else if (comando == "IRRIGACAO_OFF") digitalWrite(PIN_IRRIGACAO, LOW);
+      else if (comando == "LUZ_OFF") digitalWrite(PIN_ILUMINACAO, LOW);
+    }
+  }
+}
